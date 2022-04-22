@@ -7,6 +7,7 @@
 #include <base/scheduler.h>
 #include <base/playerdb.h>
 #include <Actor/Player.h>
+#include <Actor/ServerPlayer.h>
 #include <Actor/Attribute.h>
 #include <Core/DataItem.h>
 #include <Core/BuildPlatform.h>

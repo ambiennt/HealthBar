@@ -3,96 +3,85 @@
 
 DEFAULT_SETTINGS(settings);
 
-static std::unordered_map<Player*, std::pair<float, float>> attributes;
-
 constexpr const char* inputModeToString(BuildPlatform b) {
-    switch (b) {
-        case BuildPlatform::UWP:
-        case BuildPlatform::Win32:
-            return "PC";
+	switch (b) {
+		case BuildPlatform::UWP:
+		case BuildPlatform::Win32:
+			return "PC";
 
-        case BuildPlatform::Android:
-        case BuildPlatform::iOS:
-        case BuildPlatform::Amazon:
-        case BuildPlatform::WindowsPhone:
-            return "Mobile";
+		case BuildPlatform::Android:
+		case BuildPlatform::iOS:
+		case BuildPlatform::Amazon:
+		case BuildPlatform::WindowsPhone:
+			return "Mobile";
 
-        case BuildPlatform::Xbox:
-        case BuildPlatform::PS4:
-        case BuildPlatform::Nintendo:
-            return "Controller";
+		case BuildPlatform::Xbox:
+		case BuildPlatform::PS4:
+		case BuildPlatform::Nintendo:
+			return "Controller";
 
-        default: return "Unknown";
-    }
+		default: return "Unknown";
+	}
 }
 
-void UpdateHealthBar(Player *player, Player *initalizedPlayer, float currHealth, float currAbsorption) {
+void UpdateHealthBar(Player *player, Player *initalizedPlayer, int32_t currHealth, int32_t currAbsorption) {
 
-    //player->mInputMode always returns 1
-    auto nametag = player->mPlayerName + " §7[" + inputModeToString(player->mBuildPlatform) + "]§r\n" + std::to_string((int) currHealth);
-    if (settings.useResourcePackGlyphs) {
-        nametag += "" + (currAbsorption > 0.0f ? " " + std::to_string((int) currAbsorption) + "" : ""); // glyph 0xE1FE, 0xE1FF
-    }
-    else {
-        nametag += "§c❤§r" + (currAbsorption > 0.0f ? " " + std::to_string((int) currAbsorption) + "§e❤§r" : "");
-    }
+	//player->mInputMode always returns 1 if server authoritative movement is off
+	std::string nametag = player->mPlayerName + " §7[" + inputModeToString(player->mBuildPlatform) + "]§r\n" + std::to_string(currHealth);
+	if (settings.useResourcePackGlyphs) {
+		nametag += "" + ((currAbsorption > 0) ? " " + std::to_string(currAbsorption) + "" : ""); // glyph 0xE1FE, 0xE1FF
+	}
+	else {
+		nametag += "§c❤§r" + ((currAbsorption > 0) ? " " + std::to_string(currAbsorption) + "§e❤§r" : "");
+	}
 
-    SetActorDataPacket pkt;
-    pkt.rid = player->mRuntimeID;
-    pkt.items.emplace_back(std::make_unique<DataItem2<std::string>>(ActorDataIDs::NAMETAG, nametag));
+	SetActorDataPacket pkt;
+	pkt.rid = player->mRuntimeID;
+	pkt.items.emplace_back(std::make_unique<DataItem2<std::string>>(ActorDataIDs::NAMETAG, nametag));
 
-    if (initalizedPlayer) {
-        initalizedPlayer->sendNetworkPacket(pkt);
-    }
-    else {
-        player->mDimension->forEachPlayer([&](Player &p) -> bool {
-            p.sendNetworkPacket(pkt);
-            return true;
-        });
-    }
+	if (initalizedPlayer) {
+		initalizedPlayer->sendNetworkPacket(pkt);
+	}
+	else {
+		player->mDimension->forEachPlayer([&](Player &p) -> bool {
+			p.sendNetworkPacket(pkt);
+			return true;
+		});
+	}
 }
 
-THook(void, "?normalTick@Player@@UEAAXXZ", Player* player) {
-    original(player);
+TInstanceHook(void, "?normalTick@ServerPlayer@@UEAAXXZ", ServerPlayer) {
+	original(this);
 
-    auto &[prevHealth, prevAbsorption] = attributes[player];
-    float currHealth = getAttribute(player, 7)->currentVal;
-    float currAbsorption = getAttribute(player, 14)->currentVal;
+	int32_t currHealth = this->getHealthAsInt();
+	int32_t currAbsorption = this->getAbsorptionAsInt();
 
-    bool shouldUpdate = currHealth != prevHealth || currAbsorption != prevAbsorption;
-    if (shouldUpdate) {
-        UpdateHealthBar(player, nullptr, currHealth, currAbsorption);
-    }
-    prevHealth = currHealth;
-    prevAbsorption = currAbsorption;
+	bool shouldUpdate = ((currHealth != this->EZPlayerFields->mHealthOld) || (currAbsorption != this->EZPlayerFields->mAbsorptionOld));
+	if (shouldUpdate) {
+		UpdateHealthBar(this, nullptr, currHealth, currAbsorption);
+	}
+	this->EZPlayerFields->mHealthOld = currHealth;
+	this->EZPlayerFields->mAbsorptionOld = currAbsorption;
 }
 
-THook(void*, "??0AddPlayerPacket@@QEAA@AEAVPlayer@@@Z", void* pkt, Player *player) {
-    auto ret = original(pkt, player);
-    // yes I know this is a terrible way to update the health bar when the player comes back into view but
-    // appending the nametag to the addplayer packet keeps crashing and I dont know how to fix it
-    Mod::Scheduler::SetTimeOut(Mod::Scheduler::GameTick(1), [=](auto) {
-        float currHealth = getAttribute(player, 7)->currentVal;
-        float currAbsorption = getAttribute(player, 14)->currentVal;
-        UpdateHealthBar(player, nullptr, currHealth, currAbsorption);
-    });
-    return ret;
+THook(void*, "??0AddPlayerPacket@@QEAA@AEAVPlayer@@@Z", void* pkt, Player &player) {
+	auto ret = original(pkt, player);
+	// yes I know this is a terrible way to update the health bar when the player comes back into view but
+	// appending the nametag to the addplayer packet keeps crashing and I dont know how to fix it
+	Mod::Scheduler::SetTimeOut(Mod::Scheduler::GameTick(1), [&](auto) {
+		UpdateHealthBar(&player, nullptr, player.getHealthAsInt(), player.getAbsorptionAsInt());
+	});
+	return ret;
 }
 
 void dllenter() {}
 void dllexit() {}
 void PreInit() {
-    Mod::PlayerDatabase::GetInstance().AddListener(SIG("initialized"), [](Mod::PlayerEntry const &entry) {
-        entry.player->mDimension->forEachPlayer([&](Player &p) -> bool {
-            float currHealth = getAttribute(&p, 7)->currentVal;
-            float currAbsorption = getAttribute(&p, 14)->currentVal;
-            UpdateHealthBar(&p, entry.player, currHealth, currAbsorption);
-            return true;
-        });
-    });
-
-    Mod::PlayerDatabase::GetInstance().AddListener(SIG("left"), [](Mod::PlayerEntry const &entry) {
-        attributes.erase(entry.player);
-    });
+	Mod::PlayerDatabase::GetInstance().AddListener(SIG("initialized"), [](Mod::PlayerEntry const &entry) {
+		entry.player->mDimension->forEachPlayer([&](Player &p) -> bool {
+			UpdateHealthBar(&p, entry.player, entry.player->getHealthAsInt(), entry.player->getAbsorptionAsInt());
+			return true;
+		});
+	});
 }
 void PostInit() {}
