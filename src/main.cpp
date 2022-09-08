@@ -3,47 +3,71 @@
 
 DEFAULT_SETTINGS(settings);
 
-constexpr const char* inputModeToString(BuildPlatform b) {
+void dllenter() {}
+void dllexit() {}
+void PreInit() {
+	Mod::PlayerDatabase::GetInstance().AddListener(SIG("initialized"), [](Mod::PlayerEntry const &entry) {
+		entry.player->mDimension->forEachPlayer([&](Player &p) -> bool {
+			HealthBarUtils::updateHealthBar(p, entry.player, entry.player->getHealthAsInt(), entry.player->getAbsorptionAsInt());
+			return true;
+		});
+	});
+}
+void PostInit() {}
+
+std::string HealthBarUtils::inputModeToString(BuildPlatform b) {
 	switch (b) {
 		case BuildPlatform::UWP:
 		case BuildPlatform::Win32:
-			return "PC";
+			return std::string("PC");
 
 		case BuildPlatform::Android:
 		case BuildPlatform::iOS:
 		case BuildPlatform::Amazon:
 		case BuildPlatform::WindowsPhone:
-			return "Mobile";
+			return std::string("Mobile");
 
 		case BuildPlatform::Xbox:
 		case BuildPlatform::PS4:
 		case BuildPlatform::Nintendo:
-			return "Controller";
+			return std::string("Controller");
 
-		default: return "Unknown";
+		default: return std::string("Unknown");
 	}
 }
 
-void UpdateHealthBar(Player *player, Player *initalizedPlayer, int32_t currHealth, int32_t currAbsorption) {
+std::string HealthBarUtils::getHealthBarNameTag(Player &player, int32_t currHealth, int32_t currAbsorption) {
 
 	//player->mInputMode always returns 1 if server authoritative movement is off
-	std::string nametag = player->mPlayerName + " §7[" + inputModeToString(player->mBuildPlatform) + "]§r\n" + std::to_string(currHealth);
+	std::string nametag = player.mPlayerName + " §7[" + HealthBarUtils::inputModeToString(player.mBuildPlatform) + "]§r\n" + std::to_string(currHealth);
+
 	if (settings.useResourcePackGlyphs) {
-		nametag += "" + ((currAbsorption > 0) ? " " + std::to_string(currAbsorption) + "" : ""); // glyph 0xE1FE, 0xE1FF
+		nametag += HEALTH_GLYPH;
+		if (currAbsorption > 0) {
+			nametag += " " + std::to_string(currAbsorption) + ABSORPTION_GLYPH;
+		}
 	}
 	else {
-		nametag += "§c❤§r" + ((currAbsorption > 0) ? " " + std::to_string(currAbsorption) + "§e❤§r" : "");
+		nametag += HEALTH_ASCII;
+		if (currAbsorption > 0) {
+			nametag += " " + std::to_string(currAbsorption) + ABSORPTION_ASCII;
+		}
 	}
+	return nametag;
+}
 
-	SetActorDataPacket pkt;
-	pkt.rid = player->mRuntimeID;
-	pkt.items.emplace_back(std::make_unique<DataItem2<std::string>>(ActorDataIDs::NAMETAG, nametag));
+void HealthBarUtils::updateHealthBar(Player &player, Player *initalizedPlayer, int32_t currHealth, int32_t currAbsorption) {
+
+	SetActorDataPacket pkt{};
+	pkt.rid = player.mRuntimeID;
+	pkt.items.emplace_back(std::make_unique<DataItem2<std::string>>(
+		ActorDataIDs::NAMETAG, getHealthBarNameTag(player, currHealth, currAbsorption)));
 
 	if (initalizedPlayer) {
 		initalizedPlayer->sendNetworkPacket(pkt);
 	}
 	else {
-		player->mDimension->forEachPlayer([&](Player &p) -> bool {
+		player.mDimension->forEachPlayer([&pkt](const Player &p) -> bool {
 			p.sendNetworkPacket(pkt);
 			return true;
 		});
@@ -55,33 +79,20 @@ TInstanceHook(void, "?normalTick@ServerPlayer@@UEAAXXZ", ServerPlayer) {
 
 	int32_t currHealth = this->getHealthAsInt();
 	int32_t currAbsorption = this->getAbsorptionAsInt();
+	bool shouldUpdate = ((currHealth != this->mEZPlayer->mHealthOld) ||
+						(currAbsorption != this->mEZPlayer->mAbsorptionOld));
 
-	bool shouldUpdate = ((currHealth != this->EZPlayerFields->mHealthOld) || (currAbsorption != this->EZPlayerFields->mAbsorptionOld));
 	if (shouldUpdate) {
-		UpdateHealthBar(this, nullptr, currHealth, currAbsorption);
+		HealthBarUtils::updateHealthBar(*this, nullptr, currHealth, currAbsorption);
 	}
-	this->EZPlayerFields->mHealthOld = currHealth;
-	this->EZPlayerFields->mAbsorptionOld = currAbsorption;
 }
 
-THook(void*, "??0AddPlayerPacket@@QEAA@AEAVPlayer@@@Z", void* pkt, Player &player) {
-	auto ret = original(pkt, player);
-	// yes I know this is a terrible way to update the health bar when the player comes back into view but
-	// appending the nametag to the addplayer packet keeps crashing and I dont know how to fix it
-	Mod::Scheduler::SetTimeOut(Mod::Scheduler::GameTick(1), [&](auto) {
-		UpdateHealthBar(&player, nullptr, player.getHealthAsInt(), player.getAbsorptionAsInt());
+// yes I know this is a terrible way to update the health bar when the player comes back into view but
+// appending the nametag to the addplayer packet keeps crashing and I dont know how to fix it
+THook(void*, "??0AddPlayerPacket@@QEAA@AEAVPlayer@@@Z", void* pkt, Player &newPlayer) {
+	auto ret = original(pkt, newPlayer);
+	Mod::Scheduler::SetTimeOut(Mod::Scheduler::GameTick(1), [&newPlayer](auto) {
+		HealthBarUtils::updateHealthBar(newPlayer, nullptr, newPlayer.getHealthAsInt(), newPlayer.getAbsorptionAsInt());
 	});
 	return ret;
 }
-
-void dllenter() {}
-void dllexit() {}
-void PreInit() {
-	Mod::PlayerDatabase::GetInstance().AddListener(SIG("initialized"), [](Mod::PlayerEntry const &entry) {
-		entry.player->mDimension->forEachPlayer([&](Player &p) -> bool {
-			UpdateHealthBar(&p, entry.player, entry.player->getHealthAsInt(), entry.player->getAbsorptionAsInt());
-			return true;
-		});
-	});
-}
-void PostInit() {}
