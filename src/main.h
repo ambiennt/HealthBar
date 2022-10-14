@@ -26,14 +26,16 @@ inline struct Settings {
 
 namespace HealthBarUtils {
 
-static inline constexpr const char* HEALTH_GLYPH      = "\ue1fe"; // , glyph 0xE1FE
-static inline constexpr const char* ABSORPTION_GLYPH  = "\ue1ff"; // , glyph 0xE1FF
-static inline constexpr const char* HEALTH_ASCII      = "\u00a7\u0063\u2764\u00a7\u0072"; // §c❤§r
-static inline constexpr const char* ABSORPTION_ASCII  = "\u00a7\u0065\u2764\u00a7\u0072"; // §e❤§r
+inline constexpr const char* HEALTH_GLYPH      = "\ue1fe"; // , glyph 0xE1FE
+inline constexpr const char* ABSORPTION_GLYPH  = "\ue1ff"; // , glyph 0xE1FF
+inline constexpr const char* HEALTH_ASCII      = "\u00a7\u0063\u2764\u00a7\u0072"; // §c❤§r
+inline constexpr const char* ABSORPTION_ASCII  = "\u00a7\u0065\u2764\u00a7\u0072"; // §e❤§r
 
-std::string inputModeToString(BuildPlatform b);
-std::string getHealthBarNameTag(Player &player, int32_t currHealth, int32_t currAbsorption);
-void updateHealthBar(Player &player, Player *initalizedPlayer, int32_t currHealth, int32_t currAbsorption);
+std::string buildPlatformToString(BuildPlatform b);
+std::string getHealthBarNameTag(Player &player);
+SetActorDataPacket getHealthBarPacket(Player &player);
+void broadcastHealthBar(Player &player);
+void syncAllHealthBarData(Player &joiningPlayer);
 
 } // namespace HealthBarUtils
 

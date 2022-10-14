@@ -6,40 +6,41 @@ DEFAULT_SETTINGS(settings);
 void dllenter() {}
 void dllexit() {}
 void PreInit() {
-	Mod::PlayerDatabase::GetInstance().AddListener(SIG("initialized"), [](Mod::PlayerEntry const &entry) {
-		entry.player->mDimension->forEachPlayer([&](Player &p) -> bool {
-			HealthBarUtils::updateHealthBar(p, entry.player, entry.player->getHealthAsInt(), entry.player->getAbsorptionAsInt());
-			return true;
-		});
+	Mod::PlayerDatabase::GetInstance().AddListener(SIG("initialized"), [](const Mod::PlayerEntry &entry) {
+		HealthBarUtils::syncAllHealthBarData(*(entry.player));
 	});
 }
 void PostInit() {}
 
-std::string HealthBarUtils::inputModeToString(BuildPlatform b) {
+std::string HealthBarUtils::buildPlatformToString(BuildPlatform b) {
 	switch (b) {
 		case BuildPlatform::UWP:
 		case BuildPlatform::Win32:
-			return std::string("PC");
+			return "PC";
 
 		case BuildPlatform::Android:
 		case BuildPlatform::iOS:
 		case BuildPlatform::Amazon:
 		case BuildPlatform::WindowsPhone:
-			return std::string("Mobile");
+			return "Mobile";
 
 		case BuildPlatform::Xbox:
 		case BuildPlatform::PS4:
 		case BuildPlatform::Nintendo:
-			return std::string("Controller");
+			return "Controller";
 
-		default: return std::string("Unknown");
+		default: return "Unknown";
 	}
 }
 
-std::string HealthBarUtils::getHealthBarNameTag(Player &player, int32_t currHealth, int32_t currAbsorption) {
+std::string HealthBarUtils::getHealthBarNameTag(Player &player) {
 
-	//player->mInputMode always returns 1 if server authoritative movement is off
-	std::string nametag = player.mPlayerName + " §7[" + HealthBarUtils::inputModeToString(player.mBuildPlatform) + "]§r\n" + std::to_string(currHealth);
+	int32_t currHealth = player.getHealthAsInt();
+	int32_t currAbsorption = player.getAbsorptionAsInt();
+
+	// player.mInputMode always returns 1 if server authoritative movement is off
+	// use player.mBuildPlatform instead
+	std::string nametag(player.mPlayerName + " §7[" + HealthBarUtils::buildPlatformToString(player.mBuildPlatform) + "]§r\n" + std::to_string(currHealth));
 
 	if (settings.useResourcePackGlyphs) {
 		nametag += HEALTH_GLYPH;
@@ -56,22 +57,34 @@ std::string HealthBarUtils::getHealthBarNameTag(Player &player, int32_t currHeal
 	return nametag;
 }
 
-void HealthBarUtils::updateHealthBar(Player &player, Player *initalizedPlayer, int32_t currHealth, int32_t currAbsorption) {
-
-	SetActorDataPacket pkt{};
+// obtains a SetActorDataPacket with the updated health/absorption for the given player
+SetActorDataPacket HealthBarUtils::getHealthBarPacket(Player &player) {
+	SetActorDataPacket pkt;
 	pkt.rid = player.mRuntimeID;
 	pkt.items.emplace_back(std::make_unique<DataItem2<std::string>>(
-		ActorDataIDs::NAMETAG, getHealthBarNameTag(player, currHealth, currAbsorption)));
+		ActorDataIDs::NAMETAG, HealthBarUtils::getHealthBarNameTag(player)));
+	
+	return pkt;
+}
 
-	if (initalizedPlayer) {
-		initalizedPlayer->sendNetworkPacket(pkt);
-	}
-	else {
-		player.mDimension->forEachPlayer([&pkt](const Player &p) -> bool {
-			p.sendNetworkPacket(pkt);
-			return true;
-		});
-	}
+// sends the new health bar nametag from the player to all players in the dimension (including the player who's health changed)
+// use when a player changes health
+void HealthBarUtils::broadcastHealthBar(Player &player) {
+	auto pkt = HealthBarUtils::getHealthBarPacket(player);
+	player.mDimension->forEachPlayer([&pkt](Player &p) -> bool {
+		p.sendNetworkPacket(pkt);
+		return true;
+	});
+}
+
+// sends all health bar nametags from all players in the dimension (including the joining player) to the joining player
+// used when a new player joins the server
+void HealthBarUtils::syncAllHealthBarData(Player &joiningPlayer) {
+	joiningPlayer.mDimension->forEachPlayer([&joiningPlayer](Player &p) -> bool {
+		auto pkt = HealthBarUtils::getHealthBarPacket(p);
+		joiningPlayer.sendNetworkPacket(pkt);
+		return true;
+	});
 }
 
 TInstanceHook(void, "?normalTick@ServerPlayer@@UEAAXXZ", ServerPlayer) {
@@ -83,16 +96,16 @@ TInstanceHook(void, "?normalTick@ServerPlayer@@UEAAXXZ", ServerPlayer) {
 						(currAbsorption != this->mEZPlayer->mAbsorptionOld));
 
 	if (shouldUpdate) {
-		HealthBarUtils::updateHealthBar(*this, nullptr, currHealth, currAbsorption);
+		HealthBarUtils::broadcastHealthBar(*this);
 	}
 }
 
-// yes I know this is a terrible way to update the health bar when the player comes back into view but
-// appending the nametag to the addplayer packet keeps crashing and I dont know how to fix it
+// this is a hacky way to update the health bar when a player comes into view (not necessarily one that has just joined the server)
+// appending the nametag to the AddPlayerPacket keeps crashing and idk how to fix it
 THook(void*, "??0AddPlayerPacket@@QEAA@AEAVPlayer@@@Z", void* pkt, Player &newPlayer) {
 	auto ret = original(pkt, newPlayer);
 	Mod::Scheduler::SetTimeOut(Mod::Scheduler::GameTick(1), [&newPlayer](auto) {
-		HealthBarUtils::updateHealthBar(newPlayer, nullptr, newPlayer.getHealthAsInt(), newPlayer.getAbsorptionAsInt());
+		HealthBarUtils::broadcastHealthBar(newPlayer);
 	});
 	return ret;
 }
