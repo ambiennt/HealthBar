@@ -34,7 +34,7 @@ inline constexpr const char* ABSORPTION_ASCII  = "\u00a7\u0065\u2764\u00a7\u0072
 std::string buildPlatformToString(BuildPlatform b);
 std::string getHealthBarNameTag(Player &player);
 SetActorDataPacket getHealthBarPacket(Player &player);
-void broadcastHealthBar(Player &player);
+void broadcastHealthBar(Player &player, Player* exceptPlayer);
 void syncAllHealthBarData(Player &joiningPlayer);
 
 } // namespace HealthBarUtils

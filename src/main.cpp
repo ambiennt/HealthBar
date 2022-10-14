@@ -69,10 +69,12 @@ SetActorDataPacket HealthBarUtils::getHealthBarPacket(Player &player) {
 
 // sends the new health bar nametag from the player to all players in the dimension (including the player who's health changed)
 // use when a player changes health
-void HealthBarUtils::broadcastHealthBar(Player &player) {
+void HealthBarUtils::broadcastHealthBar(Player &player, Player *exceptPlayer) {
 	auto pkt = HealthBarUtils::getHealthBarPacket(player);
-	player.mDimension->forEachPlayer([&pkt](Player &p) -> bool {
-		p.sendNetworkPacket(pkt);
+	player.mDimension->forEachPlayer([&](Player &p) -> bool {
+		if (!exceptPlayer || (&p != exceptPlayer)) {
+			p.sendNetworkPacket(pkt);
+		}
 		return true;
 	});
 }
@@ -96,7 +98,7 @@ TInstanceHook(void, "?normalTick@ServerPlayer@@UEAAXXZ", ServerPlayer) {
 						(currAbsorption != this->mEZPlayer->mAbsorptionOld));
 
 	if (shouldUpdate) {
-		HealthBarUtils::broadcastHealthBar(*this);
+		HealthBarUtils::broadcastHealthBar(*this, nullptr);
 	}
 }
 
@@ -105,7 +107,7 @@ TInstanceHook(void, "?normalTick@ServerPlayer@@UEAAXXZ", ServerPlayer) {
 THook(void*, "??0AddPlayerPacket@@QEAA@AEAVPlayer@@@Z", void* pkt, Player &newPlayer) {
 	auto ret = original(pkt, newPlayer);
 	Mod::Scheduler::SetTimeOut(Mod::Scheduler::GameTick(1), [&newPlayer](auto) {
-		HealthBarUtils::broadcastHealthBar(newPlayer);
+		HealthBarUtils::broadcastHealthBar(newPlayer, &newPlayer);
 	});
 	return ret;
 }
